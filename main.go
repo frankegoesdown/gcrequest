@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -31,6 +30,13 @@ var (
 )
 
 func main() {
+	// remove curl from args
+	for index, arg := range os.Args{
+		if arg == "curl"{
+			os.Args = append(os.Args[:index], os.Args[index+1:]...)
+		}
+	}
+
 	httpMethod = getopt.StringLong("request", 'X', "GET", "HTTP method to use")
 	help = getopt.BoolLong("help", 'h', "This help text")
 	postBody = getopt.StringLong("data", 'd', "", "HTTP POST data")
@@ -45,8 +51,9 @@ func main() {
 	}
 
 	args := getopt.Args()
+
 	if len(args) != 1 {
-		flag.Usage()
+		fmt.Println("too many arguments")
 		os.Exit(0)
 	}
 
@@ -184,6 +191,7 @@ func readResponseBody(req *http.Request, resp *http.Response) (response []byte) 
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	if string(bodyBytes)[0] == '[' {
 		err = json.Unmarshal(bodyBytes, &jsonMaps)
 		if err != nil {
@@ -199,6 +207,7 @@ func readResponseBody(req *http.Request, resp *http.Response) (response []byte) 
 		if err != nil {
 			log.Fatal(err)
 		}
+
 		response, err = jsonC.MarshalIndentWithFormatter(jsonMap, "", "  ", f)
 		if err != nil {
 			log.Fatal(err)
