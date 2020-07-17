@@ -17,58 +17,46 @@ import (
 
 	"github.com/fatih/color"
 	jsonC "github.com/nwidger/jsoncolor"
+	"github.com/pborman/getopt"
 )
 
 var (
-	// Command line flags.
-	httpMethod      string
-	postBody        string
-	followRedirects bool
-	onlyHeader      bool
-	httpHeaders     headers
-	help            bool
+	head            = "HEAD"
+	httpMethod      *string
+	postBody        *string
+	followRedirects *bool
+	onlyHeader      *bool
+	httpHeaders     []string
+	help            *bool
 )
 
-
-func init() {
-	flag.StringVar(&httpMethod, "X", "GET", "HTTP method to use")
-	flag.StringVar(&postBody, "d", "", "HTTP POST data")
-	flag.BoolVar(&followRedirects, "L", false, "")
-	flag.BoolVar(&onlyHeader, "I", false, "don't read body of request")
-	flag.Var(&httpHeaders, "H", "set HTTP header; repeatable: -H 'Accept: ...' -H 'Range: ...'")
-	flag.BoolVar(&help, "h", false, "Help")
-
-	flag.Usage = usage
-}
-
-func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: %s [OPTIONS] URL\n\n", os.Args[0])
-	fmt.Fprintln(os.Stderr, "OPTIONS:")
-	flag.PrintDefaults()
-}
-
 func main() {
-	flag.Parse()
+	httpMethod = getopt.StringLong("request", 'X', "GET", "HTTP method to use")
+	help = getopt.BoolLong("help", 'h', "This help text")
+	postBody = getopt.StringLong("data", 'd', "", "HTTP POST data")
+	followRedirects = getopt.BoolLong("location", 'L', "Follow redirects")
+	onlyHeader = getopt.BoolLong("head", 'I', "Show document info only")
+	_ = getopt.ListVarLong(&httpHeaders, "set HTTP header; repeatable: -H 'Accept: ...' -H 'Range: ...'", 'H')
+	getopt.Parse()
 
-	if help {
+	if *help {
 		fmt.Println("help")
 		os.Exit(0)
 	}
 
-	args := flag.Args()
+	args := getopt.Args()
 	if len(args) != 1 {
 		flag.Usage()
 		os.Exit(0)
 	}
 
-	//if (httpMethod == "POST" || httpMethod == "PUT") && postBody == "" {
-	//	log.Fatal("must supply post body using -d when POST or PUT is used")
-	//}
-
-	if onlyHeader {
-		httpMethod = "HEAD"
+	if (*httpMethod == "POST" || *httpMethod == "PUT") && postBody == nil {
+		log.Fatal("must supply post body using -d when POST or PUT is used")
 	}
 
+	if *onlyHeader {
+		httpMethod = &head
+	}
 	visit(parseURL(args[0]))
 }
 
@@ -101,7 +89,6 @@ func dialContext(network string) func(ctx context.Context, network, addr string)
 		return (&net.Dialer{
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
-			DualStack: false,
 		}).DialContext(ctx, network, addr)
 	}
 }
@@ -109,7 +96,8 @@ func dialContext(network string) func(ctx context.Context, network, addr string)
 // visit visits a url and times the interaction.
 // If the response is a 30x, visit follows the redirect.
 func visit(url *url.URL) {
-	req := newRequest(httpMethod, url, postBody)
+
+	req := newRequest(httpMethod, postBody, url)
 
 	tr := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
@@ -146,11 +134,12 @@ func isRedirect(resp *http.Response) bool {
 	return resp.StatusCode > 299 && resp.StatusCode < 400
 }
 
-func newRequest(method string, url *url.URL, body string) *http.Request {
-	req, err := http.NewRequest(method, url.String(), createBody(body))
+func newRequest(method, body *string, url *url.URL) *http.Request {
+	req, err := http.NewRequest(*method, url.String(), createBody(*body))
 	if err != nil {
 		log.Fatalf("unable to create request: %v", err)
 	}
+
 	for _, h := range httpHeaders {
 		k, v := headerKeyValue(h)
 		if strings.EqualFold(k, "host") {
@@ -179,15 +168,6 @@ func readResponseBody(req *http.Request, resp *http.Response) (response []byte) 
 	if isRedirect(resp) || req.Method == http.MethodHead {
 		return
 	}
-	var jsonMap []map[string]interface{}
-	bodyBytes, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = json.Unmarshal(bodyBytes, &jsonMap)
-	if err != nil {
-		log.Fatal(err)
-	}
 	f := jsonC.NewFormatter()
 	// set custom colors
 	f.StringColor = color.New(color.FgCyan)
@@ -197,62 +177,33 @@ func readResponseBody(req *http.Request, resp *http.Response) (response []byte) 
 	f.FieldColor = color.New(color.FgBlue)
 	f.FieldQuoteColor = color.New(color.FgBlue)
 	f.NullColor = color.New(color.FgCyan)
-	response, err = jsonC.MarshalIndentWithFormatter(jsonMap, "", "  ", f)
+
+	var jsonMaps []map[string]interface{}
+	var jsonMap map[string]interface{}
+	bodyBytes, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		log.Fatal(err)
 	}
-	return
-}
-
-type headers []string
-
-func (h headers) String() string {
-	var o []string
-	for _, v := range h {
-		o = append(o, "-H "+v)
-	}
-	return strings.Join(o, " ")
-}
-
-func (h *headers) Set(v string) error {
-	*h = append(*h, v)
-	return nil
-}
-
-func (h headers) Len() int      { return len(h) }
-func (h headers) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
-func (h headers) Less(i, j int) bool {
-	a, b := h[i], h[j]
-
-	// server always sorts at the top
-	if a == "Server" {
-		return true
-	}
-	if b == "Server" {
-		return false
-	}
-
-	endtoend := func(n string) bool {
-		// https://www.w3.org/Protocols/rfc2616/rfc2616-sec13.html#sec13.5.1
-		switch n {
-		case "Connection",
-			"Keep-Alive",
-			"Proxy-Authenticate",
-			"Proxy-Authorization",
-			"TE",
-			"Trailers",
-			"Transfer-Encoding",
-			"Upgrade":
-			return false
-		default:
-			return true
+	if string(bodyBytes)[0] == '[' {
+		err = json.Unmarshal(bodyBytes, &jsonMaps)
+		if err != nil {
+			log.Fatal(err)
 		}
-	}
+		response, err = jsonC.MarshalIndentWithFormatter(jsonMaps, "", "  ", f)
+		if err != nil {
+			log.Fatal(err)
+		}
 
-	x, y := endtoend(a), endtoend(b)
-	if x == y {
-		// both are of the same class
-		return a < b
+	} else {
+		err = json.Unmarshal(bodyBytes, &jsonMap)
+		if err != nil {
+			log.Fatal(err)
+		}
+		response, err = jsonC.MarshalIndentWithFormatter(jsonMap, "", "  ", f)
+		if err != nil {
+			log.Fatal(err)
+		}
+
 	}
-	return x
+	return
 }

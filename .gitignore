@@ -14,6 +14,6 @@ _testmain.go
 *.exe
 *.test
 *.prof
-gcrequest
+gcrequest*
 .idea
 vendor
