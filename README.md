@@ -6,14 +6,17 @@ a simple service for formatting JSON from curl's answer
 
 ```
 go get github.com/frankegoesdown/gcrequest
+cd ~/go/github.com/frankegoesdown/gcrequest
+go build -o gcr
+sudo mv gcr /usr/local/bin/gcr
 ```
 
 ## usage
 
 ```
-gcrequest curl --location --request GET 'http://localhost:8080/todos' 
+gcr curl --location --request GET 'http://localhost:8080/todos' 
 
 or 
 
-gcrequest --location --request GET 'http://localhost:8080/todos' 
+gcr --location --request GET 'http://localhost:8080/todos' 
 ```
